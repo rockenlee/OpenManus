@@ -8,7 +8,6 @@ from app.config import SandboxSettings
 from app.exceptions import ToolError
 from app.sandbox.client import SANDBOX_CLIENT
 
-
 PathLike = Union[str, Path]
 
 
@@ -156,3 +155,74 @@ class SandboxFileOperator(FileOperator):
             ) from exc
         except Exception as exc:
             return 1, "", f"Error executing command in sandbox: {str(exc)}"
+
+
+from pydantic import Field
+
+from app.tool.base import BaseTool, ToolResult
+
+
+class FileOperatorsTool(BaseTool):
+    """Tool for file operations using LocalFileOperator."""
+
+    name: str = "file_operations"
+    description: str = "Tool for operating on files in the local filesystem"
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path to the file or directory"},
+            "content": {
+                "type": "string",
+                "description": "Content to write (for write operations)",
+            },
+            "operation": {
+                "type": "string",
+                "enum": ["read", "write", "exists", "is_directory", "run_command"],
+                "description": "The operation to perform",
+            },
+            "cmd": {
+                "type": "string",
+                "description": "Command to run (for run_command operation)",
+            },
+            "timeout": {
+                "type": "number",
+                "description": "Timeout for command execution in seconds",
+            },
+        },
+        "required": ["operation", "path"],
+    }
+
+    operator: LocalFileOperator = Field(default_factory=LocalFileOperator)
+
+    async def execute(self, **kwargs) -> ToolResult:
+        """Execute file operations."""
+        operation = kwargs.get("operation")
+        path = kwargs.get("path")
+
+        try:
+            if operation == "read":
+                content = await self.operator.read_file(path)
+                return ToolResult(output=content)
+            elif operation == "write":
+                content = kwargs.get("content", "")
+                await self.operator.write_file(path, content)
+                return ToolResult(output=f"Successfully wrote to {path}")
+            elif operation == "exists":
+                exists = await self.operator.exists(path)
+                return ToolResult(output=exists)
+            elif operation == "is_directory":
+                is_dir = await self.operator.is_directory(path)
+                return ToolResult(output=is_dir)
+            elif operation == "run_command":
+                cmd = kwargs.get("cmd")
+                timeout = kwargs.get("timeout", 120.0)
+                return_code, stdout, stderr = await self.operator.run_command(
+                    cmd, timeout
+                )
+                return ToolResult(
+                    output=f"Return Code: {return_code}\nStdout: {stdout}\nStderr: {stderr}"
+                )
+            else:
+                return ToolResult(error=f"Unknown operation: {operation}")
+        except Exception as e:
+            return ToolResult(error=str(e))
